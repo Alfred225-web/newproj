@@ -1,4 +1,4 @@
-st.write("MONDAY KEY EXISTS:", bool(st.secrets.get("MONDAY_API_KEY")))
+
 import streamlit as st
 import requests
 import pandas as pd
@@ -8,13 +8,14 @@ from openai import OpenAI
 # CONFIG (Streamlit Secrets)
 # =========================
 
+
 MONDAY_API_KEY = st.secrets["MONDAY_API_KEY"]
 DEALS_BOARD_ID = int(st.secrets["DEALS_BOARD_ID"])
 WORK_ORDERS_BOARD_ID = int(st.secrets["WORK_ORDERS_BOARD_ID"])
 GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
 
 MONDAY_URL = "https://api.monday.com/v2"
-
+st.write("MONDAY KEY EXISTS:", bool(st.secrets.get("MONDAY_API_KEY")))
 # Groq Client (OpenAI compatible)
 client = OpenAI(
     api_key=GROQ_API_KEY,
@@ -196,4 +197,5 @@ if query:
         st.metric("Weighted Forecast", f"₹{weighted:,.0f}")
     else:
         st.write("Try asking about pipeline.")
+
 
