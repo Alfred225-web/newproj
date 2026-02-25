@@ -1,45 +1,32 @@
 import streamlit as st
 import requests
 import pandas as pd
-from openai import OpenAI
+import os
+from dotenv import load_dotenv
 
 # ----------------------------
-# CONFIG (STREAMLIT CLOUD)
+# CONFIG
 # ----------------------------
 
-MONDAY_API_KEY = st.secrets["MONDAY_API_KEY"].strip()
-DEALS_BOARD_ID = st.secrets["DEALS_BOARD_ID"]
-WORK_ORDERS_BOARD_ID = st.secrets["WORK_ORDERS_BOARD_ID"]
-GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
+load_dotenv()
 
-# Groq via OpenAI SDK
-client = OpenAI(
-    api_key=GROQ_API_KEY,
-    base_url="https://api.groq.com/openai/v1"
-)
+MONDAY_API_KEY = os.getenv("MONDAY_API_KEY")
+DEALS_BOARD_ID = os.getenv("DEALS_BOARD_ID")
+WORK_ORDERS_BOARD_ID = os.getenv("WORK_ORDERS_BOARD_ID")
+HF_API_KEY = os.getenv("HF_API_KEY")
 
+HF_MODEL = "mistralai/Mistral-7B-Instruct-v0.1"
 MONDAY_URL = "https://api.monday.com/v2"
 
 st.set_page_config(page_title="Monday BI Agent", layout="wide")
 st.title("📊 Monday.com Business Intelligence Agent")
+st.markdown("Founder-level AI business intelligence across Sales & Operations")
 
 # ----------------------------
-# FETCH BOARD FROM MONDAY
+# FETCH BOARD DATA
 # ----------------------------
+
 def fetch_board(board_id):
-
-    # Safety checks
-    if not board_id:
-        raise Exception("Board ID is missing.")
-
-    if not MONDAY_API_KEY:
-        raise Exception("Monday API key is missing.")
-
-    # Ensure board ID is integer
-    try:
-        board_id = int(board_id)
-    except:
-        raise Exception("Board ID must be numeric.")
 
     query = f"""
     {{
@@ -59,51 +46,26 @@ def fetch_board(board_id):
     }}
     """
 
-    headers = {
-        "Authorization": MONDAY_API_KEY.strip(),
-        "Content-Type": "application/json"
-    }
+    headers = {"Authorization": MONDAY_API_KEY}
+    response = requests.post(MONDAY_URL, json={"query": query}, headers=headers)
 
-    response = requests.post(
-        MONDAY_URL,
-        json={"query": query},
-        headers=headers
-    )
-
-    # Debugging (remove later if you want)
     if response.status_code != 200:
-        raise Exception(f"HTTP Error {response.status_code}: {response.text}")
+        raise Exception("Failed to fetch board")
 
     data = response.json()
-
-    if "errors" in data:
-        raise Exception(f"Monday API Error: {data['errors']}")
-
-    boards = data.get("data", {}).get("boards", [])
-
-    if not boards:
-        raise Exception("Board not found. Check Board ID.")
-
-    items = boards[0].get("items_page", {}).get("items", [])
-
-    if not items:
-        return pd.DataFrame()  # Return empty safely
+    items = data["data"]["boards"][0]["items_page"]["items"]
 
     rows = []
-
     for item in items:
-        row = {"Item Name": item.get("name", "")}
-
-        for col in item.get("column_values", []):
-            col_title = col.get("column", {}).get("title", "")
-            row[col_title] = col.get("text", "")
-
+        row = {"Item Name": item["name"]}
+        for col in item["column_values"]:
+            row[col["column"]["title"]] = col["text"]
         rows.append(row)
 
     return pd.DataFrame(rows)
 
 # ----------------------------
-# HELPERS
+# UTILITIES
 # ----------------------------
 
 def find_column(df, keywords):
@@ -126,8 +88,8 @@ def clean_numeric_columns(df):
 
 def calculate_pipeline(df):
 
-    status_col = find_column(df, ["status"])
-    value_col = find_column(df, ["value"])
+    status_col = find_column(df, ["deal status", "status"])
+    value_col = find_column(df, ["value", "amount"])
     prob_col = find_column(df, ["probability"])
 
     if not status_col or not value_col:
@@ -138,20 +100,20 @@ def calculate_pipeline(df):
     total_pipeline = pd.to_numeric(open_deals[value_col], errors="coerce").sum()
 
     if prob_col:
-        weighted = (
-            pd.to_numeric(open_deals[value_col], errors="coerce") *
-            pd.to_numeric(open_deals[prob_col], errors="coerce")
+        weighted_pipeline = (
+            pd.to_numeric(open_deals[value_col], errors="coerce")
+            * pd.to_numeric(open_deals[prob_col], errors="coerce")
         ).sum()
     else:
-        weighted = total_pipeline
+        weighted_pipeline = total_pipeline
 
-    return total_pipeline, weighted
+    return total_pipeline, weighted_pipeline
 
 
 def revenue_by_sector(df):
 
-    status_col = find_column(df, ["status"])
-    value_col = find_column(df, ["value"])
+    status_col = find_column(df, ["deal status", "status"])
+    value_col = find_column(df, ["value", "amount"])
     sector_col = find_column(df, ["sector"])
 
     if not status_col or not value_col:
@@ -175,69 +137,30 @@ def revenue_by_sector(df):
 def work_order_metrics(df):
 
     status_col = find_column(df, ["status"])
-
-    total = len(df)
+    total_orders = len(df)
 
     if not status_col:
-        return total, 0, 0, 0
+        return total_orders, 0, 0, 0
 
-    counts = df[status_col].value_counts()
+    status_counts = df[status_col].value_counts()
 
-    return (
-        total,
-        counts.get("Completed", 0),
-        counts.get("In Progress", 0),
-        counts.get("Delayed", 0)
-    )
+    completed = status_counts.get("Completed", 0)
+    in_progress = status_counts.get("In Progress", 0)
+    delayed = status_counts.get("Delayed", 0)
 
-# ----------------------------
-# AI INTENT (GROQ)
-# ----------------------------
-
-def interpret_query(query):
-
-    prompt = f"""
-    Classify this query into one of:
-    pipeline
-    revenue
-    operations
-    leadership
-    sector
-    general
-
-    Query: {query}
-    """
-
-    response = client.chat.completions.create(
-        model="llama-3.1-8b-instant",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0
-    )
-
-    return response.choices[0].message.content.lower()
+    return total_orders, completed, in_progress, delayed
 
 # ----------------------------
-# MAIN APP
+# DASHBOARD
 # ----------------------------
 
-try:
-    with st.spinner("Fetching live data from Monday.com..."):
-        deals_df = clean_numeric_columns(fetch_board(DEALS_BOARD_ID))
-        work_df = clean_numeric_columns(fetch_board(WORK_ORDERS_BOARD_ID))
-except Exception as e:
-    st.error(str(e))
-    st.stop()
+def build_dashboard(deals_df, work_df):
 
-tab1, tab2 = st.tabs(["📊 Dashboard", "🤖 Chat Mode"])
-
-# ----------------------------
-# DASHBOARD TAB
-# ----------------------------
-
-with tab1:
+    st.subheader("📈 Executive Dashboard")
 
     pipeline, weighted = calculate_pipeline(deals_df)
     revenue = revenue_by_sector(deals_df).sum()
+
     total_orders, completed, in_progress, delayed = work_order_metrics(work_df)
 
     col1, col2, col3, col4 = st.columns(4)
@@ -247,44 +170,140 @@ with tab1:
     col3.metric("Closed Revenue", f"₹{revenue:,.0f}")
     col4.metric("Work Orders", total_orders)
 
+    sector_data = revenue_by_sector(deals_df)
+    if not sector_data.empty:
+        st.subheader("Revenue by Sector")
+        st.bar_chart(sector_data)
+
 # ----------------------------
-# CHAT TAB
+# HUGGINGFACE INTELLIGENCE
 # ----------------------------
+
+def interpret_query(query):
+
+    if not HF_API_KEY:
+        return rule_based_intent(query)
+
+    headers = {
+        "Authorization": f"Bearer {HF_API_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    prompt = f"""
+    Classify this business query into one word only:
+    pipeline, revenue, operations, leadership, sector, general
+
+    Query: {query}
+    """
+
+    payload = {
+        "inputs": prompt,
+        "parameters": {
+            "max_new_tokens": 10,
+            "temperature": 0.1
+        }
+    }
+
+    try:
+        response = requests.post(
+            f"https://api-inference.huggingface.co/models/{HF_MODEL}",
+            headers=headers,
+            json=payload,
+            timeout=15
+        )
+
+        if response.status_code != 200:
+            return rule_based_intent(query)
+
+        result = response.json()
+
+        if isinstance(result, list) and "generated_text" in result[0]:
+            output = result[0]["generated_text"].lower()
+            for intent in ["pipeline", "revenue", "operations", "leadership", "sector"]:
+                if intent in output:
+                    return intent
+
+    except:
+        return rule_based_intent(query)
+
+    return "general"
+
+
+# ----------------------------
+# FALLBACK RULE ENGINE
+# ----------------------------
+
+def rule_based_intent(query):
+
+    q = query.lower()
+
+    if "pipeline" in q or "forecast" in q:
+        return "pipeline"
+    elif "revenue" in q:
+        return "revenue"
+    elif "operation" in q or "work order" in q:
+        return "operations"
+    elif "leadership" in q or "summary" in q:
+        return "leadership"
+    elif "sector" in q:
+        return "sector"
+    else:
+        return "general"
+
+# ----------------------------
+# MAIN FLOW
+# ----------------------------
+
+try:
+    with st.spinner("Fetching live data from monday.com..."):
+        deals_df = clean_numeric_columns(fetch_board(DEALS_BOARD_ID))
+        work_df = clean_numeric_columns(fetch_board(WORK_ORDERS_BOARD_ID))
+except Exception:
+    st.error("⚠ Unable to fetch monday.com data.")
+    st.stop()
+
+tab1, tab2 = st.tabs(["📊 Dashboard", "🤖 Chat Mode"])
+
+with tab1:
+    build_dashboard(deals_df, work_df)
 
 with tab2:
 
     query = st.text_input("Ask a business question:")
 
     if query:
-
         intent = interpret_query(query)
 
-        if "pipeline" in intent:
+        if intent == "pipeline":
             pipeline, weighted = calculate_pipeline(deals_df)
             st.metric("Total Pipeline", f"₹{pipeline:,.0f}")
             st.metric("Weighted Forecast", f"₹{weighted:,.0f}")
 
-        elif "revenue" in intent:
+        elif intent == "revenue":
             revenue = revenue_by_sector(deals_df).sum()
             st.metric("Closed Revenue", f"₹{revenue:,.0f}")
 
-        elif "operations" in intent:
+        elif intent == "operations":
             total_orders, completed, in_progress, delayed = work_order_metrics(work_df)
             st.write(f"Total Orders: {total_orders}")
             st.write(f"Completed: {completed}")
             st.write(f"In Progress: {in_progress}")
             st.write(f"Delayed: {delayed}")
 
-        elif "leadership" in intent:
-            st.write("Leadership overview:")
+        elif intent == "leadership":
+            st.markdown("### 📊 Leadership Summary")
+            pipeline, weighted = calculate_pipeline(deals_df)
+            revenue = revenue_by_sector(deals_df).sum()
+            total_orders, completed, in_progress, delayed = work_order_metrics(work_df)
+
             st.write(f"Pipeline: ₹{pipeline:,.0f}")
+            st.write(f"Forecast: ₹{weighted:,.0f}")
             st.write(f"Revenue: ₹{revenue:,.0f}")
             st.write(f"Work Orders: {total_orders}")
+            st.write(f"Delayed: {delayed}")
 
-        elif "sector" in intent:
+        elif intent == "sector":
             st.bar_chart(revenue_by_sector(deals_df))
 
         else:
             st.write("Could you clarify your request?")
-
-
