@@ -19,7 +19,7 @@ GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
 MONDAY_URL = "https://api.monday.com/v2"
 
 client = OpenAI(
-    api_key=GROK_API_KEY,
+    api_key=GROQ_API_KEY,
     base_url="https://api.x.ai/v1"
 )
 
@@ -250,4 +250,5 @@ with tab2:
             st.bar_chart(revenue_by_sector(deals_df))
 
         else:
+
             st.write("Could you clarify your request?")
