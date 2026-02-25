@@ -26,8 +26,20 @@ st.title("📊 Monday.com Business Intelligence Agent")
 # ----------------------------
 # FETCH BOARD FROM MONDAY
 # ----------------------------
-
 def fetch_board(board_id):
+
+    # Safety checks
+    if not board_id:
+        raise Exception("Board ID is missing.")
+
+    if not MONDAY_API_KEY:
+        raise Exception("Monday API key is missing.")
+
+    # Ensure board ID is integer
+    try:
+        board_id = int(board_id)
+    except:
+        raise Exception("Board ID must be numeric.")
 
     query = f"""
     {{
@@ -48,7 +60,7 @@ def fetch_board(board_id):
     """
 
     headers = {
-        "Authorization": MONDAY_API_KEY,
+        "Authorization": MONDAY_API_KEY.strip(),
         "Content-Type": "application/json"
     }
 
@@ -58,25 +70,34 @@ def fetch_board(board_id):
         headers=headers
     )
 
+    # Debugging (remove later if you want)
     if response.status_code != 200:
-        raise Exception(f"Monday API request failed: {response.text}")
+        raise Exception(f"HTTP Error {response.status_code}: {response.text}")
 
     data = response.json()
 
     if "errors" in data:
-        raise Exception(f"Monday Error: {data['errors']}")
+        raise Exception(f"Monday API Error: {data['errors']}")
 
     boards = data.get("data", {}).get("boards", [])
-    if not boards:
-        raise Exception("Board not found or empty.")
 
-    items = boards[0]["items_page"]["items"]
+    if not boards:
+        raise Exception("Board not found. Check Board ID.")
+
+    items = boards[0].get("items_page", {}).get("items", [])
+
+    if not items:
+        return pd.DataFrame()  # Return empty safely
 
     rows = []
+
     for item in items:
-        row = {"Item Name": item["name"]}
-        for col in item["column_values"]:
-            row[col["column"]["title"]] = col["text"]
+        row = {"Item Name": item.get("name", "")}
+
+        for col in item.get("column_values", []):
+            col_title = col.get("column", {}).get("title", "")
+            row[col_title] = col.get("text", "")
+
         rows.append(row)
 
     return pd.DataFrame(rows)
@@ -265,4 +286,5 @@ with tab2:
 
         else:
             st.write("Could you clarify your request?")
+
 
