@@ -7,7 +7,7 @@ from openai import OpenAI
 # CONFIG (STREAMLIT CLOUD)
 # ----------------------------
 
-MONDAY_API_KEY = st.secrets["MONDAY_API_KEY"]
+MONDAY_API_KEY = st.secrets["MONDAY_API_KEY"].strip()
 DEALS_BOARD_ID = st.secrets["DEALS_BOARD_ID"]
 WORK_ORDERS_BOARD_ID = st.secrets["WORK_ORDERS_BOARD_ID"]
 GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
@@ -265,3 +265,4 @@ with tab2:
 
         else:
             st.write("Could you clarify your request?")
+
