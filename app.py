@@ -1,3 +1,4 @@
+st.write("MONDAY KEY EXISTS:", bool(st.secrets.get("MONDAY_API_KEY")))
 import streamlit as st
 import requests
 import pandas as pd
@@ -195,3 +196,4 @@ if query:
         st.metric("Weighted Forecast", f"₹{weighted:,.0f}")
     else:
         st.write("Try asking about pipeline.")
+
